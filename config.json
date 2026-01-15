@@ -1,0 +1,31 @@
+{
+  "projects": [
+    {
+      "id": "kinty-jones",
+      "name": "Kinty Jones",
+      "live_pages": {
+        "Air Quality": "https://kintyjones.com/residential/residential-air-quality/",
+        "Cooling": "https://kintyjones.com/residential/residential-cooling/",
+        "Emergency AC": "https://kintyjones.com/residential/residential-emergency-ac/",
+        "Generator": "https://kintyjones.com/residential/residential-generator/",
+        "Heating": "https://kintyjones.com/residential/heating/"
+      },
+      "google_doc_url": "https://docs.google.com/document/d/1RRNPrHQlVFYAmRdGE9AIlgSl_Eiu08nNN5F3Z7LN06Y/edit?tab=t.0",
+      "rules": {
+        "bad_phrases": [
+          "Tulsa Metro generator communities",
+          "heating services"
+        ],
+        "required_phrases": [
+          "Northwest Arkansas and Tulsa Metro",
+          "Contact us"
+        ]
+      },
+      "bugherd_project_id": "489477"
+    }
+  ],
+  "settings": {
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "timeout": 10
+  }
+}
