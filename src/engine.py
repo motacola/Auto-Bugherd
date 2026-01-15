@@ -9,6 +9,7 @@ from .bugherd_client import BugHerdClient
 from .doc_parser import GoogleDocParser
 from .link_checker import LinkChecker
 from .report_generator import ReportGenerator
+from .element_locator import ElementLocator
 
 # Configure logging to be more descriptive
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -60,30 +61,56 @@ class BugHerdEngine:
             logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def check_seo_metadata(self, soup, target_meta, page_name):
+    def check_seo_metadata(self, soup, target_meta, page_name, page_url=None, project_id=None, auto_ticket=False):
+        """Check SEO metadata and optionally create enriched tickets."""
         issues = []
         if not soup or not target_meta:
             return issues
 
         # Check Title
         if target_meta.get('title'):
-            live_title = soup.title.string.strip() if soup.title else "Missing Title Tag"
+            title_element = soup.title
+            live_title = title_element.string.strip() if title_element else "Missing Title Tag"
             if not self.doc_parser.fuzzy_match(target_meta['title'], live_title):
-                issues.append(f"SEO Title mismatch. Expected: '{target_meta['title']}', Found: '{live_title}'")
+                issue_msg = f"SEO Title mismatch. Expected: '{target_meta['title']}', Found: '{live_title}'"
+                issues.append(issue_msg)
+                
+                if auto_ticket and project_id and title_element:
+                    element_info = ElementLocator.get_element_info(title_element)
+                    self.bh_client.create_ticket_with_element(
+                        project_id, "SEO Title Mismatch", element_info,
+                        target_meta['title'], live_title, page_url
+                    )
 
         # Check Description
         if target_meta.get('description'):
-            live_desc = soup.find('meta', attrs={'name': 'description'})
-            live_desc_content = live_desc['content'].strip() if live_desc else "Missing Meta Description"
+            desc_element = soup.find('meta', attrs={'name': 'description'})
+            live_desc_content = desc_element['content'].strip() if desc_element else "Missing Meta Description"
             if not self.doc_parser.fuzzy_match(target_meta['description'], live_desc_content, threshold=0.6):
-                issues.append(f"Meta Description mismatch. Expected snippet of: '{target_meta['description'][:50]}...'")
+                issue_msg = f"Meta Description mismatch. Expected snippet of: '{target_meta['description'][:50]}...'"
+                issues.append(issue_msg)
+                
+                if auto_ticket and project_id and desc_element:
+                    element_info = ElementLocator.get_element_info(desc_element)
+                    self.bh_client.create_ticket_with_element(
+                        project_id, "Meta Description Mismatch", element_info,
+                        target_meta['description'][:100], live_desc_content[:100], page_url
+                    )
 
         # Check H1
         if target_meta.get('h1'):
-            live_h1 = soup.find('h1')
-            live_h1_text = live_h1.get_text().strip() if live_h1 else "Missing H1 Tag"
+            h1_element = soup.find('h1')
+            live_h1_text = h1_element.get_text().strip() if h1_element else "Missing H1 Tag"
             if not self.doc_parser.fuzzy_match(target_meta['h1'], live_h1_text):
-                issues.append(f"H1 Header mismatch. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'")
+                issue_msg = f"H1 Header mismatch. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'"
+                issues.append(issue_msg)
+                
+                if auto_ticket and project_id and h1_element:
+                    element_info = ElementLocator.get_element_info(h1_element)
+                    self.bh_client.create_ticket_with_element(
+                        project_id, "H1 Mismatch", element_info,
+                        target_meta['h1'], live_h1_text, page_url
+                    )
 
         return issues
 
@@ -110,7 +137,7 @@ class BugHerdEngine:
 
         # 1. SEO Metadata Check
         if target_seo:
-            issues.extend(self.check_seo_metadata(soup, target_seo, "Ad-Hoc"))
+            issues.extend(self.check_seo_metadata(soup, target_seo, "Ad-Hoc", page_url=url, project_id=project_id, auto_ticket=auto_ticket))
 
         # 2. Metrics Check
         if doc_text:
@@ -163,7 +190,7 @@ class BugHerdEngine:
 
             # SEO METADATA
             if target_seo:
-                page_issues.extend(self.check_seo_metadata(soup, target_seo, page_name))
+                page_issues.extend(self.check_seo_metadata(soup, target_seo, page_name, page_url=url, project_id=project.get('bugherd_project_id'), auto_ticket=auto_ticket))
 
             # BAD PHRASES
             rules = project.get('rules', {})

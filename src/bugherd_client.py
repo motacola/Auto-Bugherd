@@ -57,3 +57,42 @@ class BugHerdClient:
         except Exception as e:
             logger.error(f"Error adding comment: {e}")
             return None
+
+    def create_ticket_with_element(self, project_id, issue_type, element_info, expected, found, page_url):
+        """
+        Create a BugHerd ticket with element location information.
+        
+        Args:
+            project_id: BugHerd project ID
+            issue_type: Type of issue (e.g., "SEO Title Mismatch")
+            element_info: Dict with css_selector, xpath, context from ElementLocator
+            expected: Expected value
+            found: Actual value found
+            page_url: URL of the page
+        """
+        if not self.api_key:
+            logger.error("BugHerd API Key missing. Skipping ticket creation.")
+            return None
+        
+        # Build structured description
+        description = f"**{issue_type}**\n\n"
+        
+        if element_info and element_info.get('tag'):
+            description += f"**Element:** `<{element_info['tag']}>`\n"
+        
+        description += f"**Expected:** {expected}\n"
+        description += f"**Found:** {found}\n\n"
+        
+        # Add location information
+        if element_info:
+            description += "📍 **Element Location:**\n"
+            if element_info.get('css_selector'):
+                description += f"- **CSS Selector:** `{element_info['css_selector']}`\n"
+            if element_info.get('xpath'):
+                description += f"- **XPath:** `{element_info['xpath']}`\n"
+            if element_info.get('context'):
+                description += f"- **Context:** \"{element_info['context']}\"\n"
+        
+        description += f"\n🔗 **Page URL:** {page_url}"
+        
+        return self.create_ticket(project_id, description, page_url=page_url)
