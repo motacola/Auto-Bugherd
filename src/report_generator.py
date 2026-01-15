@@ -1,5 +1,11 @@
 import datetime
 import os
+import logging
+from typing import Optional
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ReportGenerator:
     def __init__(self, output_dir="reports"):
@@ -7,10 +13,21 @@ class ReportGenerator:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-    def generate_html_report(self, project_name, results):
+    def generate_html_report(self, project_name: str, results: list[dict]) -> Optional[str]:
         """
-        results: list of dicts {page_name, url, issues, status}
+        Generate an HTML report for the QA results.
+        
+        Args:
+            project_name: Name of the project for the report.
+            results: List of dictionaries containing page_name, url, and issues.
+        
+        Returns:
+            Path to the generated HTML report file, or None if an error occurs.
         """
+        if not project_name or not results:
+            logger.error("Invalid input: project_name and results must be provided.")
+            return None
+        
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         filename = f"report_{project_name.lower().replace(' ', '_')}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
         filepath = os.path.join(self.output_dir, filename)
@@ -51,13 +68,29 @@ class ReportGenerator:
         </html>
         """
         
-        with open(filepath, 'w') as f:
-            f.write(html_content)
-        
-        print(f"✅ HTML Report generated: {filepath}")
-        return filepath
+        try:
+            with open(filepath, 'w') as f:
+                f.write(html_content)
+            logger.info(f"✅ HTML Report generated: {filepath}")
+            return filepath
+        except IOError as e:
+            logger.error(f"Failed to write report file: {e}")
+            return None
 
-    def _render_card(self, result):
+    def _render_card(self, result: dict) -> str:
+        """
+        Render an individual card for the report.
+        
+        Args:
+            result: Dictionary containing page_name, url, and issues.
+        
+        Returns:
+            HTML string for the card.
+        """
+        if not isinstance(result, dict) or 'page_name' not in result or 'url' not in result:
+            logger.error("Invalid result format: missing required keys.")
+            return ""
+        
         status_class = "pass" if not result['issues'] else "fail"
         status_text = "PASSED" if not result['issues'] else "FAILED"
         

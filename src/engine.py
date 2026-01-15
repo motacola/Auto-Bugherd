@@ -3,11 +3,17 @@ import json
 import sys
 import os
 import argparse
+import logging
 from bs4 import BeautifulSoup
+from requests.exceptions import RequestException
 from .bugherd_client import BugHerdClient
 from .doc_parser import GoogleDocParser
 from .link_checker import LinkChecker
 from .report_generator import ReportGenerator
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class BugHerdEngine:
     def __init__(self, config_path="config.json", bugherd_api_key=None):
@@ -18,8 +24,8 @@ class BugHerdEngine:
         self.config = {
             "projects": [],
             "settings": {
-                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "timeout": 10
+                "user_agent": os.getenv("USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+                "timeout": int(os.getenv("TIMEOUT", 10))
             }
         }
 
@@ -42,17 +48,18 @@ class BugHerdEngine:
         self.link_checker = LinkChecker(user_agent=self.config['settings']['user_agent'], timeout=self.timeout)
         self.report_gen = ReportGenerator()
 
-    def fetch_live_soup(self, url):
+    def fetch_live_soup(self, url) -> BeautifulSoup | None:
         try:
             response = requests.get(url, headers=self.headers, timeout=self.timeout)
             if response.status_code == 200:
                 return BeautifulSoup(response.text, 'html.parser')
+            logger.error(f"Failed to fetch {url}: HTTP {response.status_code}")
             return None
-        except Exception as e:
-            print(f"Error fetching {url}: {e}")
+        except RequestException as e:
+            logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def check_seo_metadata(self, soup, target_meta, page_name):
+    def check_seo_metadata(self, soup: BeautifulSoup, target_meta: dict, page_name: str) -> list[str]:
         issues = []
         if not soup or not target_meta:
             return issues
@@ -61,6 +68,7 @@ class BugHerdEngine:
         if target_meta.get('title'):
             live_title = soup.title.string.strip() if soup.title else "Missing Title Tag"
             if not self.doc_parser.fuzzy_match(target_meta['title'], live_title):
+                logger.warning(f"SEO Title mismatch for {page_name}. Expected: '{target_meta['title']}', Found: '{live_title}'")
                 issues.append(f"SEO Title mismatch. Expected: '{target_meta['title']}', Found: '{live_title}'")
 
         # Check Description
@@ -68,6 +76,7 @@ class BugHerdEngine:
             live_desc = soup.find('meta', attrs={'name': 'description'})
             live_desc_content = live_desc['content'].strip() if live_desc else "Missing Meta Description"
             if not self.doc_parser.fuzzy_match(target_meta['description'], live_desc_content, threshold=0.6):
+                logger.warning(f"Meta Description mismatch for {page_name}. Expected snippet of: '{target_meta['description'][:50]}...'")
                 issues.append(f"Meta Description mismatch. Expected snippet of: '{target_meta['description'][:50]}...'")
 
         # Check H1
@@ -75,6 +84,7 @@ class BugHerdEngine:
             live_h1 = soup.find('h1')
             live_h1_text = live_h1.get_text().strip() if live_h1 else "Missing H1 Tag"
             if not self.doc_parser.fuzzy_match(target_meta['h1'], live_h1_text):
+                logger.warning(f"H1 Header mismatch for {page_name}. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'")
                 issues.append(f"H1 Header mismatch. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'")
 
         return issues
