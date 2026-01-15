@@ -1,6 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 class GoogleDocParser:
     def __init__(self, user_agent):
@@ -24,9 +27,10 @@ class GoogleDocParser:
                 content_div = soup.find('div', id='contents') or soup.body
                 if content_div:
                     return content_div.get_text(separator=' ', strip=True)
+            logger.error(f"Failed to fetch Google Doc: HTTP {response.status_code}")
             return None
         except Exception as e:
-            print(f"Error fetching Google Doc: {e}")
+            logger.error(f"Error fetching Google Doc: {e}")
             return None
 
     def extract_seo_metadata(self, text):
@@ -40,17 +44,20 @@ class GoogleDocParser:
             "h1": None
         }
         
-        # Patterns for Title (Improved)
+        if not text:
+            return metadata
+            
+        # Patterns for Title (Simplified and more flexible)
         title_match = re.search(r"(?:SEO\s+Title|Title\s+Tag|Page\s+Title)[:\s]+(.*?)(?:\n|$|\s{2,})", text, re.IGNORECASE)
         if title_match:
             metadata["title"] = title_match.group(1).strip()
             
-        # Patterns for Description (Improved)
+        # Patterns for Description
         desc_match = re.search(r"(?:Meta\s+Description|SEO\s+Description|Description)[:\s]+(.*?)(?:\n|$|\s{2,})", text, re.IGNORECASE)
         if desc_match:
             metadata["description"] = desc_match.group(1).strip()
             
-        # Patterns for H1 (Improved)
+        # Patterns for H1
         h1_match = re.search(r"(?:H1\s+Header|H1\s+Tag|H1)[:\s]+(.*?)(?:\n|$|\s{2,})", text, re.IGNORECASE)
         if h1_match:
             metadata["h1"] = h1_match.group(1).strip()
@@ -61,6 +68,8 @@ class GoogleDocParser:
         """
         Attempts to extract the metrics section specifically.
         """
+        if not text:
+            return []
         metrics_pattern = re.compile(r"(\d+\+?\s+Years|\d\.\d\s+Stars|\d+\+\s+Service areas)", re.IGNORECASE)
         matches = metrics_pattern.findall(text)
         return list(set(matches)) # Unique only
@@ -76,14 +85,19 @@ class GoogleDocParser:
         needle = needle.lower().strip()
         haystack = haystack.lower()
         
+        # Exact match first
         if needle in haystack:
             return True
             
-        # Check if any segment of haystack is close to needle
+        # Sliding window for fuzzy comparison
         words = haystack.split()
         needle_words = needle.split()
         n_len = len(needle_words)
         
+        if n_len == 0:
+            return False
+            
+        # Check if any segment of haystack is close to needle
         for i in range(len(words) - n_len + 1):
             segment = " ".join(words[i:i+n_len])
             ratio = SequenceMatcher(None, needle, segment).ratio()

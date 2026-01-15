@@ -5,27 +5,26 @@ import os
 import argparse
 import logging
 from bs4 import BeautifulSoup
-from requests.exceptions import RequestException
 from .bugherd_client import BugHerdClient
 from .doc_parser import GoogleDocParser
 from .link_checker import LinkChecker
 from .report_generator import ReportGenerator
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to be more descriptive
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class BugHerdEngine:
     def __init__(self, config_path="config.json", bugherd_api_key=None):
-        # Resolve config path relative to project root
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_full_path = os.path.join(base_path, config_path)
+        # Resolve config path relative to project root (2 levels up from src/engine.py)
+        self.base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_full_path = os.path.join(self.base_path, config_path)
         
         self.config = {
             "projects": [],
             "settings": {
-                "user_agent": os.getenv("USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
-                "timeout": int(os.getenv("TIMEOUT", 10))
+                "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "timeout": 10
             }
         }
 
@@ -33,33 +32,35 @@ class BugHerdEngine:
             try:
                 with open(config_full_path, 'r') as f:
                     user_config = json.load(f)
-                    # Merge settings safely
                     if "settings" in user_config:
                         self.config["settings"].update(user_config["settings"])
                     if "projects" in user_config:
                         self.config["projects"] = user_config["projects"]
+                logger.info(f"Loaded config from {config_full_path}")
             except Exception as e:
-                print(f"⚠️ Warning: Failed to load config.json ({e}). Using defaults.")
+                logger.warning(f"Failed to load config.json ({e}). Using defaults.")
             
         self.headers = {'User-Agent': self.config['settings']['user_agent']}
         self.timeout = self.config['settings']['timeout']
+        
+        # Initialize sub-clients
         self.bh_client = BugHerdClient(api_key=bugherd_api_key)
         self.doc_parser = GoogleDocParser(user_agent=self.config['settings']['user_agent'])
         self.link_checker = LinkChecker(user_agent=self.config['settings']['user_agent'], timeout=self.timeout)
-        self.report_gen = ReportGenerator()
+        self.report_gen = ReportGenerator(output_dir=os.path.join(self.base_path, "reports"))
 
-    def fetch_live_soup(self, url) -> BeautifulSoup | None:
+    def fetch_live_soup(self, url):
         try:
             response = requests.get(url, headers=self.headers, timeout=self.timeout)
             if response.status_code == 200:
                 return BeautifulSoup(response.text, 'html.parser')
-            logger.error(f"Failed to fetch {url}: HTTP {response.status_code}")
+            logger.error(f"Failed to reach {url}: HTTP {response.status_code}")
             return None
-        except RequestException as e:
+        except Exception as e:
             logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def check_seo_metadata(self, soup: BeautifulSoup, target_meta: dict, page_name: str) -> list[str]:
+    def check_seo_metadata(self, soup, target_meta, page_name):
         issues = []
         if not soup or not target_meta:
             return issues
@@ -68,7 +69,6 @@ class BugHerdEngine:
         if target_meta.get('title'):
             live_title = soup.title.string.strip() if soup.title else "Missing Title Tag"
             if not self.doc_parser.fuzzy_match(target_meta['title'], live_title):
-                logger.warning(f"SEO Title mismatch for {page_name}. Expected: '{target_meta['title']}', Found: '{live_title}'")
                 issues.append(f"SEO Title mismatch. Expected: '{target_meta['title']}', Found: '{live_title}'")
 
         # Check Description
@@ -76,7 +76,6 @@ class BugHerdEngine:
             live_desc = soup.find('meta', attrs={'name': 'description'})
             live_desc_content = live_desc['content'].strip() if live_desc else "Missing Meta Description"
             if not self.doc_parser.fuzzy_match(target_meta['description'], live_desc_content, threshold=0.6):
-                logger.warning(f"Meta Description mismatch for {page_name}. Expected snippet of: '{target_meta['description'][:50]}...'")
                 issues.append(f"Meta Description mismatch. Expected snippet of: '{target_meta['description'][:50]}...'")
 
         # Check H1
@@ -84,13 +83,12 @@ class BugHerdEngine:
             live_h1 = soup.find('h1')
             live_h1_text = live_h1.get_text().strip() if live_h1 else "Missing H1 Tag"
             if not self.doc_parser.fuzzy_match(target_meta['h1'], live_h1_text):
-                logger.warning(f"H1 Header mismatch for {page_name}. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'")
                 issues.append(f"H1 Header mismatch. Expected: '{target_meta['h1']}', Found: '{live_h1_text}'")
 
         return issues
 
     def run_qa_ad_hoc(self, url, doc_url=None, auto_ticket=False, project_id=None, check_links=False):
-        print(f"--- Running Ad-Hoc QA Check ---")
+        logger.info(f"Starting Ad-Hoc QA Check for {url}")
         results = []
         issues = []
         
@@ -99,14 +97,13 @@ class BugHerdEngine:
         if doc_url:
             doc_text = self.doc_parser.fetch_text_public(doc_url)
             if doc_text:
-                print("✅ Source of Truth fetched from Google Doc.")
+                logger.info("Found Source of Truth via Google Doc.")
                 target_seo = self.doc_parser.extract_seo_metadata(doc_text)
             else:
-                print("⚠️ Warning: Could not fetch Google Doc content.")
+                logger.warning("Could not fetch Google Doc content.")
 
         soup = self.fetch_live_soup(url)
         if not soup:
-            print(f"❌ Could not reach target URL: {url}")
             return False
 
         content = soup.get_text()
@@ -120,7 +117,7 @@ class BugHerdEngine:
             doc_metrics = self.doc_parser.find_metrics_block(doc_text)
             for metric in doc_metrics:
                 if not self.doc_parser.fuzzy_match(metric, content):
-                    issue_msg = f"Metric '{metric}' missing or mismatch from Google Doc."
+                    issue_msg = f"Metric '{metric}' missing or mismatch."
                     issues.append(issue_msg)
                     if auto_ticket and project_id:
                         self.bh_client.create_ticket(project_id, issue_msg, page_url=url)
@@ -135,19 +132,19 @@ class BugHerdEngine:
         self.report_gen.generate_html_report("Ad-Hoc Run", results)
 
         if issues:
-            print(f"\n🚨 {len(issues)} ISSUES FOUND (See HTML report for details)")
+            logger.error(f"{len(issues)} issues found in QA run.")
             return False
         
-        print("\n✅ QA Check Passed!")
+        logger.info("QA Check Passed!")
         return True
 
     def run_qa_project(self, project_id, auto_ticket=False, check_links=False):
         project = next((p for p in self.config['projects'] if str(p['id']) == str(project_id)), None)
         if not project:
-            print(f"Project {project_id} not found in config.")
+            logger.error(f"Project ID {project_id} not found in config.")
             return False
 
-        print(f"--- Running QA for {project['name']} ---")
+        logger.info(f"Starting QA for Project: {project['name']}")
         results = []
         
         google_doc_url = project.get('google_doc_url')
@@ -155,7 +152,6 @@ class BugHerdEngine:
         target_seo = self.doc_parser.extract_seo_metadata(doc_text) if doc_text else None
         
         for page_name, url in project.get('live_pages', {}).items():
-            print(f"Checking {page_name}...")
             page_issues = []
             soup = self.fetch_live_soup(url)
             if not soup:
@@ -180,10 +176,10 @@ class BugHerdEngine:
 
             # METRICS
             if doc_text:
-                doc_metrics = self.doc_parser.find_metrics_block(doc_text)
-                for metric in doc_metrics:
-                    if not self.doc_parser.fuzzy_match(metric, content):
-                        issue_msg = f"Metric '{metric}' missing or mismatch from Google Doc."
+                doc_metrics = self.find_metrics_in_content(doc_text, content)
+                for metric, found in doc_metrics.items():
+                    if not found:
+                        issue_msg = f"Metric '{metric}' missing or mismatch."
                         page_issues.append(issue_msg)
                         if auto_ticket:
                             self.bh_client.create_ticket(project.get('bugherd_project_id'), issue_msg, page_url=url)
@@ -198,6 +194,13 @@ class BugHerdEngine:
 
         self.report_gen.generate_html_report(project['name'], results)
         return all(not r['issues'] for r in results)
+
+    def find_metrics_in_content(self, doc_text, live_content):
+        doc_metrics = self.doc_parser.find_metrics_block(doc_text)
+        results = {}
+        for metric in doc_metrics:
+            results[metric] = self.doc_parser.fuzzy_match(metric, live_content)
+        return results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="auto-bugherd QA Engine")
